@@ -1,0 +1,280 @@
+-- luau | roblox luau | god tier lock on made by the best Indian 
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+
+local LOCAL_PLAYER = Players.LocalPlayer
+local PLAYER_GUI = LOCAL_PLAYER:WaitForChild("PlayerGui")
+
+-- CONFIGURATION
+local SETTINGS = {
+    Enabled = false,
+    MaxDistance = 300,
+    MinDistance = 1,
+    
+    -- Prediction Settings
+    VelocityThreshold = 85, 
+    BasePredictionTime = 0.08,  
+    GravityCompensation = 0.5,
+    
+    -- Zoom Settings (Dynamically captured on activation)
+    ZoomDistance = 10,
+    MinZoom = 2,
+    MaxZoom = 50,
+}
+
+-- STATE
+local lockedTargetData = nil
+local LOCK_BIND_NAME = "RawInstantLockSystem"
+
+-- CLEANUP DUPLICATES
+pcall(function() RunService:UnbindFromRenderStep(LOCK_BIND_NAME) end)
+local oldGui = PLAYER_GUI:FindFirstChild("RawLockGui")
+if oldGui then oldGui:Destroy() end
+
+-- UI SETUP (MOBILE & PC OPTIMIZED)
+local gui = Instance.new("ScreenGui")
+gui.Name = "RawLockGui"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = PLAYER_GUI
+
+local panel = Instance.new("Frame")
+panel.AnchorPoint = Vector2.new(0.5, 0.5)
+panel.Position = UDim2.new(0.5, 0, 0.85, 0)
+panel.Size = UDim2.fromOffset(240, 130)
+panel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+panel.BackgroundTransparency = 0.1
+panel.BorderSizePixel = 0
+panel.Active = true
+panel.Draggable = true
+panel.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = panel
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(80, 80, 100)
+stroke.Thickness = 1
+stroke.Parent = panel
+
+local title = Instance.new("TextLabel")
+title.Position = UDim2.fromOffset(10, 5)
+title.Size = UDim2.new(1, -20, 0, 20)
+title.BackgroundTransparency = 1
+title.Text = "RAW INSTANT LOCK"
+title.TextColor3 = Color3.fromRGB(240, 240, 250)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 12
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = panel
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Position = UDim2.fromOffset(10, 30)
+toggleBtn.Size = UDim2.new(1, -20, 0, 40)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+toggleBtn.Text = "OFF"
+toggleBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+toggleBtn.Font = Enum.Font.GothamBlack
+toggleBtn.TextSize = 16
+toggleBtn.AutoButtonColor = true
+toggleBtn.Parent = panel
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 8)
+
+local status = Instance.new("TextLabel")
+status.Position = UDim2.fromOffset(10, 75)
+status.Size = UDim2.new(1, -20, 0, 20)
+status.BackgroundTransparency = 1
+status.Text = "Ready"
+status.TextColor3 = Color3.fromRGB(150, 150, 160)
+status.Font = Enum.Font.Gotham
+status.TextSize = 10
+status.TextXAlignment = Enum.TextXAlignment.Center
+status.Parent = panel
+
+local predStatus = Instance.new("TextLabel")
+predStatus.Position = UDim2.fromOffset(10, 95)
+predStatus.Size = UDim2.new(1, -20, 0, 20)
+predStatus.BackgroundTransparency = 1
+predStatus.Text = "Mode: Static"
+predStatus.TextColor3 = Color3.fromRGB(100, 150, 255)
+predStatus.Font = Enum.Font.Gotham
+predStatus.TextSize = 10
+predStatus.TextXAlignment = Enum.TextXAlignment.Center
+predStatus.Parent = panel
+
+-- HELPER: GET VISUAL CENTER
+local function getCharacterCenter(character)
+    if not character then return nil end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local head = character:FindFirstChild("Head")
+    if hrp and head then
+        local midY = (hrp.Position.Y + head.Position.Y) / 2
+        return Vector3.new(hrp.Position.X, midY, hrp.Position.Z)
+    elseif hrp then
+        return hrp.Position + Vector3.new(0, 1.5, 0)
+    end
+    return nil
+end
+
+local function cleanup()
+    lockedTargetData = nil
+    SETTINGS.Enabled = false
+    toggleBtn.Text = "OFF"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 100, 100)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    status.Text = "Disabled"
+    predStatus.Text = "Mode: Off"
+    
+    local cam = Workspace.CurrentCamera
+    if cam then
+        cam.CameraType = Enum.CameraType.Custom
+    end
+end
+
+local function acquireBestTarget()
+    local myChar = LOCAL_PLAYER.Character
+    local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return nil end
+    
+    local myPos = myHRP.Position
+    local bestDist = math.huge
+    local bestTarget = nil
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LOCAL_PLAYER then
+            local char = player.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            
+            if hrp and hum and hum.Health > 0 then
+                local dist = (hrp.Position - myPos).Magnitude
+                if dist < SETTINGS.MaxDistance and dist > SETTINGS.MinDistance then
+                    if dist < bestDist then
+                        bestDist = dist
+                        bestTarget = {
+                            Character = char,
+                            Root = hrp,
+                            Humanoid = hum
+                        }
+                    end
+                end
+            end
+        end
+    end
+    return bestTarget
+end
+
+-- DYNAMIC ZOOM LISTENER (SCROLL WHEEL SUPPORT)
+UserInputService.InputChanged:Connect(function(input)
+    if not SETTINGS.Enabled then return end
+    if input.UserInputType == Enum.UserInputType.MouseWheel then
+        SETTINGS.ZoomDistance = math.clamp(SETTINGS.ZoomDistance - (input.Position.Z * 2), SETTINGS.MinZoom, SETTINGS.MaxZoom)
+    end
+end)
+
+-- MAIN RENDER STEP (RAW INSTANT TRACKING, ZERO SMOOTHING/DELAY)
+RunService:BindToRenderStep(
+    LOCK_BIND_NAME,
+    Enum.RenderPriority.Camera.Value + 2,
+    function(dt)
+        if not SETTINGS.Enabled or not lockedTargetData then return end
+        
+        local myChar = LOCAL_PLAYER.Character
+        local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        local myHead = myChar and myChar:FindFirstChild("Head")
+        
+        if not myHRP or not myHead then cleanup() return end
+        if not lockedTargetData.Root or not lockedTargetData.Root.Parent then cleanup() return end
+        if lockedTargetData.Humanoid.Health <= 0 then cleanup() return end
+        
+        local targetRoot = lockedTargetData.Root
+        local aimPoint = getCharacterCenter(lockedTargetData.Character)
+        if not aimPoint then cleanup() return end
+        
+        -- PREDICTION LOGIC
+        local velocity = targetRoot.AssemblyLinearVelocity
+        local speed = velocity.Magnitude
+        local distance = (targetRoot.Position - myHRP.Position).Magnitude
+        
+        if speed > SETTINGS.VelocityThreshold then
+            local dynamicTime = math.clamp(distance / 500, 0.05, 0.3) + SETTINGS.BasePredictionTime
+            local gravity = Vector3.new(0, -Workspace.Gravity, 0)
+            local predictedPos = aimPoint + (velocity * dynamicTime) + (0.5 * gravity * (dynamicTime ^ 2) * SETTINGS.GravityCompensation)
+            aimPoint = predictedPos
+            
+            predStatus.Text = string.format("Mode: Predicting (%.1fs)", dynamicTime)
+            predStatus.TextColor3 = Color3.fromRGB(255, 100, 100)
+        else
+            predStatus.Text = "Mode: Static"
+            predStatus.TextColor3 = Color3.fromRGB(100, 150, 255)
+        end
+        
+        -- RAW ANTI-FLIP YAW-ONLY BODY ROTATION (INSTANT HARD SNAP)
+        local currentPos = myHRP.Position
+        local lookDir = (aimPoint - currentPos).Unit
+        if lookDir.Magnitude >= 0.01 then
+            local flatLook = Vector3.new(lookDir.X, 0, lookDir.Z)
+            if flatLook.Magnitude > 0.05 then
+                flatLook = flatLook.Unit
+                local worldUp = Vector3.yAxis
+                local rightVec = worldUp:Cross(flatLook).Unit
+                local upVec = flatLook:Cross(rightVec).Unit
+                local newCF = CFrame.fromMatrix(currentPos, rightVec, upVec, flatLook)
+                
+                pcall(function()
+                    myHRP.CFrame = newCF
+                end)
+            end
+        end
+        
+        -- RAW INSTANT CAMERA LOCK
+        local cam = Workspace.CurrentCamera
+        if cam then
+            cam.CameraType = Enum.CameraType.Scriptable
+            local camLocalOffset = Vector3.new(0, 2, -SETTINGS.ZoomDistance)
+            local camWorldPos = myHRP.CFrame:PointToWorldSpace(camLocalOffset)
+            cam.CFrame = CFrame.lookAt(camWorldPos, aimPoint)
+        end
+        
+        status.Text = string.format("Speed: %.0f | Dist: %.0f", speed, distance)
+    end
+)
+
+toggleBtn.Activated:Connect(function()
+    if SETTINGS.Enabled then
+        cleanup()
+    else
+        local target = acquireBestTarget()
+        if target then
+            lockedTargetData = target
+            
+            -- CAPTURE CURRENT CAMERA ZOOM DISTANCE ON ACTIVATION
+            local myChar = LOCAL_PLAYER.Character
+            local myHRP = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local cam = Workspace.CurrentCamera
+            if myHRP and cam then
+                local currentDist = (cam.CFrame.Position - myHRP.Position).Magnitude
+                SETTINGS.ZoomDistance = math.clamp(currentDist, SETTINGS.MinZoom, SETTINGS.MaxZoom)
+            end
+            
+            SETTINGS.Enabled = true
+            toggleBtn.Text = "ON"
+            toggleBtn.TextColor3 = Color3.fromRGB(100, 255, 150)
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(30, 80, 50)
+            status.Text = "Locked: " .. target.Character.Name
+        else
+            status.Text = "No target found"
+        end
+    end
+end)
+
+LOCAL_PLAYER.CharacterAdded:Connect(function()
+    cleanup()
+end)
+
+print("[Raw Instant Lock] Loaded. Tap button to toggle.")
